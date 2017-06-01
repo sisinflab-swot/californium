@@ -134,15 +134,18 @@ public class MappingProperties extends java.util.Properties {
 
 	private void init() {
 
-		/* HTTP Methods */
-		set("http.request.method.options", "error.501");
+		/* HTTP Methods */		
 		set("http.request.method.trace", "error.501");
-		set("http.request.method.connect", "error.501");
-		set("http.request.method.head", 1);
+		set("http.request.method.connect", "error.501");		
 		set("http.request.method.get", 1);
 		set("http.request.method.post", 2);
 		set("http.request.method.put", 3);
 		set("http.request.method.delete", 4);
+		
+		/* LDP-CoAP Methods */
+		set("http.request.method.patch", 3);
+		set("http.request.method.head", 1);
+		set("http.request.method.options", 1);
 
 		
 		/* HTTP response codes */
@@ -153,7 +156,8 @@ public class MappingProperties extends java.util.Properties {
 		set("http.response.code.200", 69);
 		set("http.response.code.201", 65);
 		set("http.response.code.202", 69);
-		set("http.response.code.203", 69);
+		set("http.response.code.203", 69); 
+		set("http.response.code.204", 67); // LDP-CoAP No Content
 		set("http.response.code.205", 69);
 		set("http.response.code.206", 69);
 		set("http.response.code.207", 69);
@@ -190,6 +194,7 @@ public class MappingProperties extends java.util.Properties {
 		set("http.response.code.422", 128);
 		set("http.response.code.423", 128);
 		set("http.response.code.424", 128);
+		set("http.response.code.428", 142); // LDP-CoAP Precondition Required
 		
 		set("http.response.code.500", 160);
 		set("http.response.code.501", 161);
@@ -202,7 +207,7 @@ public class MappingProperties extends java.util.Properties {
 		/* CoAP Response Codes */
 		set("coap.response.code.65", 201);
 		set("coap.response.code.66", 204);
-		set("coap.response.code.67", 304);
+		set("coap.response.code.67", 204); // LDP-CoAP No Content
 		set("coap.response.code.68", 204);
 		set("coap.response.code.69", 200);
 		set("coap.response.code.128", 400);
@@ -213,7 +218,8 @@ public class MappingProperties extends java.util.Properties {
 		set("coap.response.code.133", 405);
 		set("coap.response.code.134", 406);
 		set("coap.response.code.140", 412);
-		set("coap.response.code.141", 413);
+		set("coap.response.code.141", 413);		
+		set("coap.response.code.142", 428); // LDP-CoAP Precondition Required
 		set("coap.response.code.143", 415);
 		set("coap.response.code.160", 500);
 		set("coap.response.code.161", 501);
@@ -262,6 +268,12 @@ public class MappingProperties extends java.util.Properties {
 		set("coap.message.media."+MediaTypeRegistry.IMAGE_JPEG, "image/jpeg");
 		set("coap.message.media."+MediaTypeRegistry.IMAGE_PNG, "image/png");
 		set("coap.message.media."+MediaTypeRegistry.IMAGE_TIFF, "image/tiff");
+		
+		/* Media types for LDP-CoAP*/
+		set("http.message.content-type.text/turtle", MediaTypeRegistry.TEXT_TURTLE);
+		set("http.message.content-type.application/ld+json", MediaTypeRegistry.APPLICATION_LD_JSON);
+		set("coap.message.media."+MediaTypeRegistry.TEXT_TURTLE, "text/turtle");
+		set("coap.message.media."+MediaTypeRegistry.APPLICATION_LD_JSON, "application/ld+json");
 		
 	}
 

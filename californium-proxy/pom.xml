@@ -10,7 +10,7 @@
 		<artifactId>parent</artifactId>
 		<version>1.1.0-SNAPSHOT</version>
 	</parent>
-	<artifactId>californium-proxy</artifactId>
+	<artifactId>californium-proxy-ldp</artifactId>
 	<packaging>bundle</packaging>
 
 	<name>Californium (Cf) Proxy</name>
@@ -25,7 +25,7 @@
 	<dependencies>
 		<dependency>
 			<groupId>${project.groupId}</groupId>
-			<artifactId>californium-core</artifactId>
+			<artifactId>californium-core-ldp</artifactId>
 			<version>${project.version}</version>
 			<scope>provided</scope>
 		</dependency>
@@ -51,6 +51,25 @@
 			<artifactId>guava</artifactId>
 			<version>15.0</version>
 		</dependency>
+		
+		<!-- LDP-CoAP -->
+		<dependency>
+			<groupId>it.poliba.sisinflab</groupId>
+			<artifactId>ldp-coap-core</artifactId>
+			<version>1.2.0-SNAPSHOT</version>
+			<exclusions>
+		        <exclusion>
+		            <groupId>*</groupId>
+		            <artifactId>*</artifactId>
+		        </exclusion>
+		    </exclusions>
+		</dependency>		
+		<dependency>
+		    <groupId>com.googlecode.json-simple</groupId>
+		    <artifactId>json-simple</artifactId>
+		    <version>1.1.1</version>
+		</dependency>
+		
 	</dependencies>
 
 	<build>

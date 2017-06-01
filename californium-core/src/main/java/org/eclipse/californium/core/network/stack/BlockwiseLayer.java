@@ -137,7 +137,7 @@ public class BlockwiseLayer extends AbstractLayer {
 		maxMessageSize = config.getInt(NetworkConfig.Keys.MAX_MESSAGE_SIZE, 1024);
 		preferredBlockSize = config.getInt(NetworkConfig.Keys.PREFERRED_BLOCK_SIZE, 512);
 		blockTimeout = config.getInt(NetworkConfig.Keys.BLOCKWISE_STATUS_LIFETIME);
-		maxResourceBodySize = config.getInt(NetworkConfig.Keys.MAX_RESOURCE_BODY_SIZE, 2048);
+		maxResourceBodySize = config.getInt(NetworkConfig.Keys.MAX_RESOURCE_BODY_SIZE, 8192);
 
 		LOGGER.log(Level.CONFIG,
 			"BlockwiseLayer uses MAX_MESSAGE_SIZE={0}, PREFERRED_BLOCK_SIZE={1}, BLOCKWISE_STATUS_LIFETIME={2} and MAX_RESOURCE_BODY_SIZE={3}",

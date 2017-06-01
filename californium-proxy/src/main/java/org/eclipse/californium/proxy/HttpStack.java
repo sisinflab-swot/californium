@@ -19,6 +19,7 @@ package org.eclipse.californium.proxy;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Exchanger;
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpException;
 import org.apache.http.HttpRequest;
 import org.apache.http.HttpRequestInterceptor;
@@ -67,11 +69,12 @@ import org.apache.http.protocol.ResponseConnControl;
 import org.apache.http.protocol.ResponseContent;
 import org.apache.http.protocol.ResponseDate;
 import org.apache.http.protocol.ResponseServer;
-
+import org.apache.http.util.EntityUtils;
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.coap.Response;
 import org.eclipse.californium.core.network.config.NetworkConfig;
 
+import it.poliba.sisinflab.coap.ldp.LDPUtils;
 
 /**
  * Class encapsulating the logic of a http server. The class create a receiver
@@ -233,11 +236,11 @@ public class HttpStack {
 	 * The Class CoapResponseWorker. This thread waits a response from the lower
 	 * layers. It is the consumer of the producer/consumer pattern.
 	 */
-	private final class CoapResponseWorker extends Thread {
-		private final HttpAsyncExchange httpExchange;
-		private final HttpRequest httpRequest;
-		private final Request coapRequest;
-                private final Thread responseWorker;
+	private class CoapResponseWorker extends Thread {
+		protected final HttpAsyncExchange httpExchange;
+		protected final HttpRequest httpRequest;
+		protected final Request coapRequest;
+		protected final Thread responseWorker;
 
 		/**
 		 * Instantiates a new coap response worker.
@@ -327,6 +330,81 @@ public class HttpStack {
 			httpExchange.submitResponse();
 		}
 	}
+	
+	private final class CoapMultipleResponseWorker extends CoapResponseWorker {
+		
+		protected final HttpResponse httpResponse;
+		protected final String method;
+
+		public CoapMultipleResponseWorker(String name, Request coapRequest, HttpAsyncExchange httpExchange,
+				HttpRequest httpRequest, Thread responseWorker, HttpResponse httpResponse, String method) {
+			super(name, coapRequest, httpExchange, httpRequest, responseWorker);
+			this.httpResponse = httpResponse;
+			this.method = method;
+
+		}
+		
+		/*
+		 * (non-Javadoc)
+		 * @see java.lang.Thread#run()
+		 */
+		@Override
+		public void run() {
+			// get the exchanger
+			Exchanger<Response> exchanger = exchangeMap.get(coapRequest);
+
+			// if the map does not contain the key, send an error response
+			if (exchanger == null) {
+				LOGGER.warning("exchanger == null");
+				sendSimpleHttpResponse(httpExchange, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+				return;
+			}
+
+			// get the response
+			Response coapResponse = null;
+			try {
+				coapResponse = exchanger.exchange(Response_NULL, GATEWAY_TIMEOUT, TimeUnit.MILLISECONDS);
+			} catch (TimeoutException e) {
+				LOGGER.warning("Timeout occurred");
+				// send the timeout error message
+				sendSimpleHttpResponse(httpExchange, HttpTranslator.STATUS_TIMEOUT);
+				return;
+			} catch (InterruptedException e) {
+				// if the thread is interrupted, terminate
+				if (isInterrupted()) {
+					LOGGER.warning("Thread interrupted");
+					sendSimpleHttpResponse(httpExchange, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+					return;
+				}
+			} finally {
+				exchangeMap.remove(coapRequest);
+                responseWorker.interrupt();
+                LOGGER.finer("Entry removed from map");
+			}
+
+			if (coapResponse == null) {
+				LOGGER.warning("No coap response");
+				sendSimpleHttpResponse(httpExchange, HttpTranslator.STATUS_NOT_FOUND);
+				return;
+			}
+
+			try {	
+				//translate the coap response in an http response
+				if (method.equals("discovery")){
+					LDPUtils.setLDPDiscoveryHeaders(coapResponse.getPayloadString(), httpResponse);
+				} else if(method.equals("options-get")){
+					LDPUtils.setLDPHeaders("options", httpResponse, coapResponse);
+				} else {					
+					HttpTranslator.getHttpResponse(httpRequest, coapResponse, httpResponse);
+				} 
+			} catch (TranslationException e) {
+				LOGGER.warning("Failed to translate coap response to http response: " + e.getMessage());
+				sendSimpleHttpResponse(httpExchange, HttpTranslator.STATUS_TRANSLATION_ERROR);
+				return;
+			}
+		}
+		
+	}
 
 	private class HttpServer {
 
@@ -345,9 +423,9 @@ public class HttpStack {
 			HttpAsyncRequestHandlerRegistry registry = new HttpAsyncRequestHandlerRegistry();
 
 			// register the handler that will reply to the proxy requests
-			registry.register("/" + PROXY_RESOURCE_NAME + "/*", new ProxyAsyncRequestHandler(PROXY_RESOURCE_NAME, true));
+			registry.register("/" + PROXY_RESOURCE_NAME + "/*", new LDPProxyAsyncRequestHandler(PROXY_RESOURCE_NAME, true));
 			// register the handler for the frontend
-			registry.register("/" + LOCAL_RESOURCE_NAME + "/*", new ProxyAsyncRequestHandler(LOCAL_RESOURCE_NAME, false));
+			registry.register("/" + LOCAL_RESOURCE_NAME + "/*", new LDPProxyAsyncRequestHandler(LOCAL_RESOURCE_NAME, false));
 			// register the default handler for root URIs
 			// wrapping a common request handler with an async request handler
 			registry.register("*", new BasicAsyncRequestHandler(new BaseRequestHandler()));
@@ -429,8 +507,8 @@ public class HttpStack {
 		private class ProxyAsyncRequestHandler implements
 				HttpAsyncRequestHandler<HttpRequest> {
 
-			private final String localResource;
-			private final boolean proxyingEnabled;
+			protected final String localResource;
+			protected final boolean proxyingEnabled;
 
 			/**
 			 * Instantiates a new proxy request handler.
@@ -510,8 +588,179 @@ public class HttpStack {
 				return new BasicAsyncRequestConsumer();
 			}
 		}
+		
+		private class LDPProxyAsyncRequestHandler extends ProxyAsyncRequestHandler {
 
-	}
+			public LDPProxyAsyncRequestHandler(String localResource, boolean proxyingEnabled) {
+				super(localResource, proxyingEnabled);
+			}
+			
+			/*
+			 * (non-Javadoc)
+			 * @see
+			 * org.apache.http.nio.protocol.HttpAsyncRequestHandler#handle(java.
+			 * lang.Object, org.apache.http.nio.protocol.HttpAsyncExchange,
+			 * org.apache.http.protocol.HttpContext)
+			 */
+			@Override
+			public void handle(HttpRequest httpRequest, HttpAsyncExchange httpExchange, HttpContext httpContext) throws HttpException, IOException {
+				LOGGER.finer("Incoming http request: " + httpRequest.getRequestLine());
+
+				try {
+					HttpResponse httpResponse = httpExchange.getResponse();
+					String method = httpRequest.getRequestLine().getMethod().toLowerCase();
+					if (method.equals("get")) {						
+						
+						/*** 1st CoAP Request: GET ***/
+						Request getRequest = HttpTranslator.getCoapRequest(httpRequest, localResource, proxyingEnabled);						
+						exchangeMap.put(getRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+getRequest);
+
+						Thread requestWorker = new CoapRequestWorker("HttpStart Worker: GET consummer", getRequest);
+                        Thread responseWorker = new CoapMultipleResponseWorker("HttpStack Worker: GET producer", getRequest, httpExchange, 
+                        		httpRequest, requestWorker, httpResponse, method);
+                        
+                        requestWorker.start();
+    					responseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack GET worker' to wait the response");
+    					responseWorker.join();
+    					
+    					/*** 2nd CoAP Request: DISCOVERY ***/
+						Request discoveryRequest = HttpTranslator.getCoapDiscoveryRequest(getRequest.getOptions().getProxyUri());						
+						exchangeMap.put(discoveryRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ discoveryRequest);
+
+						Thread discRequestWorker = new CoapRequestWorker("HttpStart Worker: DISCOVERY consummer", discoveryRequest);
+                        Thread discResponseWorker = new CoapMultipleResponseWorker("HttpStack Worker: DISCOVERY producer", discoveryRequest, httpExchange, 
+                        		httpRequest, discRequestWorker, httpResponse, "discovery");
+                        
+                        discRequestWorker.start();
+                        discResponseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack DISCOVERY worker' to wait the response");
+    					discResponseWorker.join();
+    					
+    					/*** 3rd CoAP Request: OPTIONS ***/
+						Request optionRequest = HttpTranslator.getCoapOptionsRequest(getRequest.getOptions().getProxyUri());				
+						exchangeMap.put(optionRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ optionRequest);
+
+						Thread optRequestWorker = new CoapRequestWorker("HttpStart Worker: OPTIONS consummer", optionRequest);
+                        Thread optResponseWorker = new CoapMultipleResponseWorker("HttpStack Worker: OPTIONS producer", optionRequest, httpExchange, 
+                        		httpRequest, optRequestWorker, httpResponse, "options-get");
+                        
+                        optRequestWorker.start();
+                        optResponseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack OPTIONS worker' to wait the response");
+    					optResponseWorker.join();						
+					} else if (method.equals("post") 
+							|| method.equals("put") 
+							|| method.equals("patch") 
+							|| method.equals("delete")) {
+						/*** CoAP Request ***/
+						Request coapRequest = HttpTranslator.getCoapRequest(httpRequest, localResource, proxyingEnabled);						
+						exchangeMap.put(coapRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ coapRequest);
+
+						Thread requestWorker = new CoapRequestWorker("HttpStart Worker: " + method.toUpperCase() + " consummer", coapRequest);
+                        Thread responseWorker = new CoapMultipleResponseWorker("HttpStack Worker: " + method.toUpperCase() + " producer", coapRequest, httpExchange, 
+                        		httpRequest, requestWorker, httpResponse, method);
+                        
+                        requestWorker.start();
+    					responseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack " + method.toUpperCase() + " worker' to wait the response");
+    					responseWorker.join();
+					} else if (method.equals("options")) {
+						/*** 1st CoAP Request: OPTIONS ***/
+						Request optionRequest = HttpTranslator.getCoapRequest(httpRequest, localResource, proxyingEnabled);					
+						exchangeMap.put(optionRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ optionRequest);
+
+						Thread optRequestWorker = new CoapRequestWorker("HttpStart Worker: OPTIONS consummer", optionRequest);
+                        Thread optResponseWorker = new CoapMultipleResponseWorker("HttpStack Worker: OPTIONS producer", optionRequest, httpExchange, 
+                        		httpRequest, optRequestWorker, httpResponse, "options");
+                        
+                        optRequestWorker.start();
+                        optResponseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack OPTIONS worker' to wait the response");
+    					optResponseWorker.join();
+    					
+    					/*** 2nd CoAP Request: DISCOVERY ***/
+						Request discoveryRequest = HttpTranslator.getCoapDiscoveryRequest(optionRequest.getOptions().getProxyUri());						
+						exchangeMap.put(discoveryRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ discoveryRequest);
+
+						Thread discRequestWorker = new CoapRequestWorker("HttpStart Worker: DISCOVERY consummer", discoveryRequest);
+                        Thread discResponseWorker = new CoapMultipleResponseWorker("HttpStack Worker: DISCOVERY producer", discoveryRequest, httpExchange, 
+                        		httpRequest, discRequestWorker, httpResponse, "discovery");
+                        
+                        discRequestWorker.start();
+                        discResponseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack DISCOVERY worker' to wait the response");
+    					discResponseWorker.join();						
+					} else if (method.equals("head")) {
+						/*** 1st CoAP Request: HEAD ***/
+						Request headRequest = HttpTranslator.getCoapRequest(httpRequest, localResource, proxyingEnabled);						
+						exchangeMap.put(headRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+headRequest);
+
+						Thread requestWorker = new CoapRequestWorker("HttpStart Worker: HEAD consummer", headRequest);
+                        Thread responseWorker = new CoapMultipleResponseWorker("HttpStack Worker: HEAD producer", headRequest, httpExchange, 
+                        		httpRequest, requestWorker, httpResponse, method);
+                        
+                        requestWorker.start();
+    					responseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack HEAD worker' to wait the response");
+    					responseWorker.join();
+    					
+    					/*** 2nd CoAP Request: DISCOVERY ***/
+						Request discoveryRequest = HttpTranslator.getCoapDiscoveryRequest(headRequest.getOptions().getProxyUri());						
+						exchangeMap.put(discoveryRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ discoveryRequest);
+
+						Thread discRequestWorker = new CoapRequestWorker("HttpStart Worker: DISCOVERY consummer", discoveryRequest);
+                        Thread discResponseWorker = new CoapMultipleResponseWorker("HttpStack Worker: DISCOVERY producer", discoveryRequest, httpExchange, 
+                        		httpRequest, discRequestWorker, httpResponse, "discovery");
+                        
+                        discRequestWorker.start();
+                        discResponseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack DISCOVERY worker' to wait the response");
+    					discResponseWorker.join();
+    					
+    					/*** 3rd CoAP Request: OPTIONS ***/
+    					Request optionRequest = HttpTranslator.getCoapOptionsRequest(headRequest.getOptions().getProxyUri());						
+						exchangeMap.put(optionRequest, new Exchanger<Response>());
+						LOGGER.info("Received HTTP request and translate to "+ optionRequest);
+
+						Thread optRequestWorker = new CoapRequestWorker("HttpStart Worker: OPTIONS consummer", optionRequest);
+                        Thread optResponseWorker = new CoapMultipleResponseWorker("HttpStack Worker: OPTIONS producer", optionRequest, httpExchange, 
+                        		httpRequest, optRequestWorker, httpResponse, "options-get");
+                        
+                        optRequestWorker.start();
+                        optResponseWorker.start();
+    					LOGGER.finer("Started thread 'httpStack OPTIONS worker' to wait the response");
+    					optResponseWorker.join();
+					}
+					
+					httpExchange.submitResponse();
+
+				} catch (InvalidMethodException e) {
+					LOGGER.warning("Method not implemented" + e.getMessage());
+					sendSimpleHttpResponse(httpExchange, HttpTranslator.STATUS_WRONG_METHOD);
+					return;
+				} catch (InvalidFieldException e) {
+					LOGGER.warning("Request malformed" + e.getMessage());
+					sendSimpleHttpResponse(httpExchange, HttpTranslator.STATUS_URI_MALFORMED);
+					return;
+				} catch (TranslationException | InterruptedException e) {
+					LOGGER.warning("Failed to translate the http request in a valid coap request: " + e.getMessage());
+					sendSimpleHttpResponse(httpExchange, HttpTranslator.STATUS_TRANSLATION_ERROR);
+					return;
+		        }
+			}
+
+		}
+
+	}		
 	
 	public void doReceiveMessage(Request request) {
 		requestHandler.handleRequest(request);

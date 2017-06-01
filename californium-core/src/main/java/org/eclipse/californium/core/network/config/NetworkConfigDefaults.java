@@ -44,7 +44,7 @@ public class NetworkConfigDefaults {
 	 * The default maximum resource body size that can be transparently transferred
 	 * in a blockwise transfer.
 	 */
-	public static final int DEFAULT_MAX_RESOURCE_BODY_SIZE = 2048; // bytes
+	public static final int DEFAULT_MAX_RESOURCE_BODY_SIZE = 8192; // bytes
 
 	/**
 	 * The default maximum amount of time (in milliseconds) between transfers of individual

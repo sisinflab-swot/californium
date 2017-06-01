@@ -23,8 +23,10 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.net.URLDecoder;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
@@ -69,9 +71,18 @@ import org.eclipse.californium.core.coap.MediaTypeRegistry;
 import org.eclipse.californium.core.coap.Message;
 import org.eclipse.californium.core.coap.Option;
 import org.eclipse.californium.core.coap.OptionNumberRegistry;
+import org.eclipse.californium.core.coap.OptionSet;
 import org.eclipse.californium.core.coap.OptionNumberRegistry.optionFormats;
+
+import com.google.common.net.HttpHeaders;
+
+import io.netty.handler.codec.http.HttpHeaderValues;
+
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.coap.Response;
+
+import it.poliba.sisinflab.coap.ldp.LDP;
+import it.poliba.sisinflab.coap.ldp.LDPUtils;
 
 
 /**
@@ -206,8 +217,24 @@ public final class HttpTranslator {
 				// FIXME: CoAP does no longer support multiple accept-options.
 				// If an HTTP request contains multiple accepts, this method
 				// fails. Therefore, we currently skip accepts at the moment.
-				if (headerName.startsWith("accept"))
-						continue;
+				if (headerName.startsWith("accept")) {
+					//continue;
+				}						
+				
+				if (headerName.equals("link")) {					
+					if (header.getValue().contains(LDP.PROP_INBOX)) {						
+						// Link Header containing the LDN Inbox Uri
+						Option locQuery = new Option(OptionNumberRegistry.LOCATION_QUERY);
+						locQuery.setStringValue(LDP.LINK_INBOX);
+						
+						String inbox = header.getValue().split(";")[0];						
+						Option locPath = new Option(OptionNumberRegistry.LOCATION_PATH);
+						locPath.setStringValue(inbox.replace("<", "").replace(">", ""));	
+						
+						optionList.add(locQuery);
+						optionList.add(locPath);
+					} 
+				}
 	
 				// get the mapping from the property file
 				String optionCodeString = HTTP_TRANSLATION_PROPERTIES.getProperty(KEY_HTTP_HEADER + headerName);
@@ -247,10 +274,12 @@ public final class HttpTranslator {
 					for (String headerFragment : headerValue.split(",")) {
 						// translate the content-type
 						Integer[] coapContentTypes = { MediaTypeRegistry.UNDEFINED };
-						if (headerFragment.contains("*")) {
-							coapContentTypes = MediaTypeRegistry.parseWildcard(headerFragment);
-						} else {
-							coapContentTypes[0] = MediaTypeRegistry.parse(headerFragment);
+						if (!headerFragment.equalsIgnoreCase("*/*")) {							
+							if (headerFragment.contains("*")) {
+								coapContentTypes = MediaTypeRegistry.parseWildcard(headerFragment);
+							} else {
+								coapContentTypes[0] = MediaTypeRegistry.parse(headerFragment);
+							}
 						}
 	
 						// if is present a conversion for the content-type, then add
@@ -289,7 +318,10 @@ public final class HttpTranslator {
 						option.setIntegerValue(Integer.parseInt(headerValue));
 						break;
 					case OPAQUE:
-						option.setValue(headerValue.getBytes(ISO_8859_1));
+						String value = headerValue;
+						if (value.length() > 8)
+							value = value.substring(0, 8);
+						option.setValue(value.getBytes(ISO_8859_1));
 						break;
 					case STRING:
 					default:
@@ -346,7 +378,7 @@ public final class HttpTranslator {
 				// check if the charset is the one allowed by coap
 				if (httpCharset != null && !httpCharset.equals(coapCharset)) {
 					// translate the payload to the utf-8 charset
-					payload = changeCharset(payload, httpCharset, coapCharset);
+					//payload = changeCharset(payload, httpCharset, coapCharset);
 				}
 			}
 		} catch (IOException e) {
@@ -416,10 +448,12 @@ public final class HttpTranslator {
 		}
 
 		// create the request -- since HTTP is reliable use CON
-		Request coapRequest = new Request(Code.valueOf(coapMethod), Type.CON);
+		Request coapRequest = new Request(Code.valueOf(coapMethod), Type.CON);	
 
 		// get the uri
-		String uriString = httpRequest.getRequestLine().getUri();
+		//String uriString = httpRequest.getRequestLine().getUri();
+		String uriString = LDPUtils.getLDPRequestURI(httpMethod, httpRequest.getRequestLine().getUri());
+		
 		// remove the initial "/"
 		uriString = uriString.substring(1);
 
@@ -479,24 +513,35 @@ public final class HttpTranslator {
 
 			// set the uri string as uri-path option
 			coapRequest.getOptions().setUriPath(uriString);
-		}
+		}				
 
 		// translate the http headers in coap options
 		List<Option> coapOptions = getCoapOptions(httpRequest.getAllHeaders());
 		for (Option option:coapOptions)
 			coapRequest.getOptions().addOption(option);
+		
+		// check Slug and Prefer header
+		if (httpRequest.getRequestLine().getMethod().equalsIgnoreCase("post") 
+				|| httpRequest.getRequestLine().getMethod().equalsIgnoreCase("put")) {
+			LDPUtils.setLDPParameters(coapRequest, httpRequest.getAllHeaders());
+		} else if (httpRequest.getRequestLine().getMethod().equalsIgnoreCase("get")) {
+			LDPUtils.setLDPPreferences(coapRequest, httpRequest.getAllHeaders());
+		}
 
 		// set the payload if the http entity is present
 		if (httpRequest instanceof HttpEntityEnclosingRequest) {
 			HttpEntity httpEntity = ((HttpEntityEnclosingRequest) httpRequest).getEntity();
-
-			// translate the http entity in coap payload
-			byte[] payload = getCoapPayload(httpEntity);
-			coapRequest.setPayload(payload);
-
+			
 			// set the content-type
 			int coapContentType = getCoapMediaType(httpRequest);
 			coapRequest.getOptions().setContentFormat(coapContentType);
+
+			// translate the http entity in coap payload
+			byte[] payload = getCoapPayload(httpEntity);
+			if (coapContentType == MediaTypeRegistry.TEXT_TURTLE || coapContentType == MediaTypeRegistry.APPLICATION_LD_JSON)
+				payload = LDPUtils.updateLDPPayload(payload, httpRequest.getHeaders("Host")[0].getValue());
+			
+			coapRequest.setPayload(payload);											
 		}
 
 		return coapRequest;
@@ -545,7 +590,7 @@ public final class HttpTranslator {
 			}
 		} else {
 			// get the translation from the property file
-			String coapCodeString = HTTP_TRANSLATION_PROPERTIES.getProperty(KEY_HTTP_CODE + httpCode);
+			String coapCodeString = HTTP_TRANSLATION_PROPERTIES.getProperty(KEY_HTTP_CODE + httpCode); 
 
 			if (coapCodeString == null || coapCodeString.isEmpty()) {
 				LOGGER.warning("coapCodeString == null");
@@ -559,6 +604,8 @@ public final class HttpTranslator {
 				throw new TranslationException("Cannot convert the status code in number", e);
 			}
 		}
+		
+		coapCode = LDPUtils.getLDPResponseCode(coapCode, coapRequest);
 
 		// create the coap reaponse
 		Response coapResponse = new Response(coapCode);
@@ -715,12 +762,45 @@ public final class HttpTranslator {
 	 * 
 	 * @return Header[]
 	 */
-	public static Header[] getHttpHeaders(List<Option> optionList) {
+	public static Header[] getHttpHeaders(String baseUri, OptionSet options) {
+		List<Option> optionList = options.asSortedList();
 		if (optionList == null) {
 			throw new IllegalArgumentException("coapMessage == null");
 		}
 
 		List<Header> headers = new LinkedList<Header>();
+		
+		// custom handling for location-query and location-path
+		boolean skipLocation = false;
+		if (options.getLocationQueryCount() > 0) {			
+			for (String q : options.getLocationQuery()) {				
+				if (q.contains(LDP.LINK_CONSTRAINEDBY)) {
+					Header header = new BasicHeader(HttpHeaders.LINK, LDPUtils.getHTTPLinkHeader(options.getLocationPathString(), LDP.LINK_REL_CONSTRAINEDBY));
+					headers.add(header);
+					skipLocation = true;
+				} else if (q.contains(LDP.LINK_INBOX)) {
+					Header header = new BasicHeader(HttpHeaders.LINK, LDPUtils.getHTTPLinkHeader(options.getLocationPathString(), LDP.PROP_INBOX));
+					headers.add(header);
+					skipLocation = true;
+				} else if (q.contains(LDP.LINK_LDP_PREF_INCLUDE) || q.contains(LDP.LINK_LDP_PREF_OMIT)) {
+					Header header = new BasicHeader(LDP.HDR_PREFERENCE_APPLIED, LDP.PREFER_RETURN_REPRESENTATION);
+					headers.add(header);
+				} else if (q.contains(LDP.LINK_REL_DESCRIBEDBY)) {
+					String[] h = q.split("=");
+					
+					String meta = LDPUtils.getHTTPLinkHeader(baseUri + h[1], LDP.LINK_REL_DESCRIBEDBY);
+					String anchor = "anchor=\"" + baseUri + h[1].replace("/meta", "") + "\"";
+					Header header = new BasicHeader(HttpHeaders.LINK, meta + ";" + anchor);
+					headers.add(header);
+				} 
+			}			
+		} 
+		
+		if (options.getLocationPathCount() > 0 && !skipLocation) {
+			String headerName = HTTP_TRANSLATION_PROPERTIES.getProperty(KEY_COAP_OPTION + OptionNumberRegistry.LOCATION_PATH);
+			Header header = new BasicHeader(headerName, baseUri + options.getLocationPathString());
+			headers.add(header);
+		}				
 
 		// iterate over each option
 		for (Option option : optionList) {
@@ -728,7 +808,10 @@ public final class HttpTranslator {
 			// the payload; skip proxy-uri because it has to be translated in a
 			// different way
 			int optionNumber = option.getNumber();
-			if (optionNumber != OptionNumberRegistry.CONTENT_FORMAT && optionNumber != OptionNumberRegistry.PROXY_URI) {
+			if (optionNumber != OptionNumberRegistry.CONTENT_FORMAT 
+					&& optionNumber != OptionNumberRegistry.PROXY_URI 
+					&& optionNumber != OptionNumberRegistry.LOCATION_PATH
+					&& optionNumber != OptionNumberRegistry.LOCATION_QUERY) {
 				// get the mapping from the property file
 				String headerName = HTTP_TRANSLATION_PROPERTIES.getProperty(KEY_COAP_OPTION + optionNumber);
 
@@ -736,7 +819,9 @@ public final class HttpTranslator {
 				if (headerName != null && !headerName.isEmpty()) {
 					// format the value
 					String stringOptionValue = null;
-					if (OptionNumberRegistry.getFormatByNr(optionNumber) == optionFormats.STRING) {
+					if (optionNumber == OptionNumberRegistry.ACCEPT) {
+						stringOptionValue = MediaTypeRegistry.toString(option.getIntegerValue());
+					} else if (OptionNumberRegistry.getFormatByNr(optionNumber) == optionFormats.STRING) {
 						stringOptionValue = option.getStringValue();
 					} else if (OptionNumberRegistry.getFormatByNr(optionNumber) == optionFormats.INTEGER) {
 						stringOptionValue = Integer.toString(option.getIntegerValue());
@@ -784,12 +869,25 @@ public final class HttpTranslator {
 		}
 
 		HttpRequest httpRequest = null;
+		
+		String ldp = LDPUtils.getLDPUriQuery(coapRequest);
 
 		String coapMethod = null;
 		switch (coapRequest.getCode()) {
-		case GET: coapMethod = "GET"; break;
+		case GET: 
+			if (ldp != null && ldp.equals("head"))
+				coapMethod = "HEAD"; 
+			else if (ldp != null && ldp.equals("options"))
+				coapMethod = "OPTIONS"; 
+			else 
+				coapMethod = "GET";
+			break;
 		case POST: coapMethod = "POST"; break;
-		case PUT: coapMethod = "PUT"; break;
+		case PUT: 
+			if (ldp != null && ldp.equals("patch"))
+				coapMethod = "PATCH";
+			else
+				coapMethod = "PUT"; break;
 		case DELETE: coapMethod = "DELETE"; break;
 		}
 
@@ -830,14 +928,14 @@ public final class HttpTranslator {
 		}
 
 		// set the headers
-		Header[] headers = getHttpHeaders(coapRequest.getOptions().asSortedList());
+		Header[] headers = getHttpHeaders(null, coapRequest.getOptions());
 		for (Header header : headers) {
 			httpRequest.addHeader(header);
 		}
 
 		return httpRequest;
-	}
-	
+	}		
+
 	/**
 	 * Sets the parameters of the incoming http response from a CoAP response.
 	 * The status code is mapped through the properties file and is set through
@@ -892,8 +990,12 @@ public final class HttpTranslator {
 		httpResponse.setStatusLine(statusLine);
 
 		// set the headers
-		Header[] headers = getHttpHeaders(coapResponse.getOptions().asSortedList());
+		String baseUri = "http://" + httpRequest.getFirstHeader("Host").getValue() + "/proxy/";
+		Header[] headers = getHttpHeaders(baseUri, coapResponse.getOptions());
 		httpResponse.setHeaders(headers);
+		
+		// set LDP headers
+		LDPUtils.setLDPHeaders(httpRequest.getRequestLine().getMethod().toLowerCase(), httpResponse, coapResponse);		
 
 		// set max-age if not already set
 		if (!httpResponse.containsHeader("cache-control")) {
@@ -901,7 +1003,15 @@ public final class HttpTranslator {
 		}
 
 		// get the http entity if the request was not HEAD
-		if (!httpRequest.getRequestLine().getMethod().equalsIgnoreCase("head")) {
+		if (!httpRequest.getRequestLine().getMethod().equalsIgnoreCase("head") 
+				&& !httpRequest.getRequestLine().getMethod().equalsIgnoreCase("options")
+				&& !httpRequest.getRequestLine().getMethod().equalsIgnoreCase("post")) {
+			
+			if (coapResponse.getOptions().getContentFormat() == MediaTypeRegistry.TEXT_TURTLE
+					|| coapResponse.getOptions().getContentFormat() == MediaTypeRegistry.APPLICATION_LD_JSON) {	
+				String updatedPayload = LDPUtils.updatePayloadIRI(baseUri, coapResponse);
+				coapResponse.setPayload(updatedPayload);
+			}
 
 			// if the content-type is not set in the coap response and if the
 			// response contains an error, then the content-type should set to
@@ -921,8 +1031,8 @@ public final class HttpTranslator {
 				ContentType contentType = ContentType.get(httpEntity);
 				httpResponse.setHeader("content-type", contentType.toString());
 			}
-		}
-	}
+		}		
+	}	
 
 	/**
 	 * Change charset.
@@ -972,6 +1082,50 @@ public final class HttpTranslator {
 	 */
 	private HttpTranslator() {
 
+	}
+	
+	public static Request getCoapDiscoveryRequest(String proxyUri) throws TranslationException{		
+	    Request coapRequest = null;
+		try {			
+			URI url = new URI(proxyUri);
+		    String coapServer = url.getScheme() + "://" + url.getAuthority();
+		    if (url.getPath().length() > 0) {
+		    	// create the request -- since HTTP is reliable use CON
+		    	coapRequest = new Request(Code.GET, Type.CON);
+			    // set the proxy as the sender to receive the response correctly
+		    	String[] fragment = url.getPath().split("/");
+			    coapRequest.getOptions().setProxyUri(coapServer + "/.well-known/core?title="+ fragment[fragment.length-1]);		    
+				InetAddress localHostAddress = InetAddress.getLocalHost();
+				coapRequest.setDestination(localHostAddress);
+		    }
+		} catch (URISyntaxException | UnknownHostException e) {
+			e.printStackTrace();
+			return null;
+		}
+
+	    return coapRequest;
+	}
+	
+	public static Request getCoapOptionsRequest(String proxyUri) throws TranslationException{		
+	    Request coapRequest = null;
+	    try {			
+			URI url = new URI(proxyUri);
+		    String coapServer = url.getScheme() + "://" + url.getAuthority();
+		    if (url.getPath().length() > 0) {
+		    	// create the request -- since HTTP is reliable use CON
+		    	coapRequest = new Request(Code.GET, Type.CON);
+			    // set the proxy as the sender to receive the response correctly
+		    	String[] fragment = url.getPath().split("/");
+			    coapRequest.getOptions().setProxyUri(coapServer + url.getPath() + "?ldp=options");		    
+				InetAddress localHostAddress = InetAddress.getLocalHost();
+				coapRequest.setDestination(localHostAddress);
+		    }
+		} catch (URISyntaxException | UnknownHostException e) {
+			e.printStackTrace();
+			return null;
+		}
+
+	    return coapRequest;
 	}
 
 }

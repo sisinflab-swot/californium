@@ -373,6 +373,8 @@ public final class CoAP {
 		REQUEST_ENTITY_INCOMPLETE(CodeClass.ERROR_RESPONSE, 8),
 		PRECONDITION_FAILED(CodeClass.ERROR_RESPONSE, 12),
 		REQUEST_ENTITY_TOO_LARGE(CodeClass.ERROR_RESPONSE, 13),
+		// 4.14 corresponding to HTTP 4.28 Precondition Required - Added for LDP-CoAP
+		PRECONDITION_REQUIRED(CodeClass.ERROR_RESPONSE, 14), 
 		UNSUPPORTED_CONTENT_FORMAT(CodeClass.ERROR_RESPONSE, 15),
 
 		// Server error: 5.00 - 5.31
@@ -446,6 +448,7 @@ public final class CoAP {
 			case 8: return REQUEST_ENTITY_INCOMPLETE;
 			case 12: return PRECONDITION_FAILED;
 			case 13: return REQUEST_ENTITY_TOO_LARGE;
+			case 14: return PRECONDITION_REQUIRED; // Added for LDP-CoAP
 			case 15: return UNSUPPORTED_CONTENT_FORMAT;
 			default:
 				return BAD_REQUEST;

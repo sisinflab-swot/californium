@@ -56,6 +56,16 @@ public class MediaTypeRegistry {
 	public static final int APPLICATION_JSON = 50; // 04
 	public static final int APPLICATION_X_OBIX_BINARY = 51; // 04
 	public static final int APPLICATION_CBOR = 60;
+	
+	/*** LDP-CoAP Media Type ***/
+	public static final int TEXT_TURTLE = 4;
+	public static final int APPLICATION_LD_JSON = 52; 
+	public static final int APPLICATION_RDF_PATCH = 53; 
+	public static final int APPLICATION_GZIP = 54;
+	public static final int APPLICATION_BZIP2 = 55;
+	public static final int APPLICATION_BSON = 56;
+	public static final int APPLICATION_UBJSON = 57;
+	public static final int APPLICATION_MSGPACK = 58;
 
 	// implementation specific
 	public static final int UNDEFINED = -1;
@@ -88,6 +98,16 @@ public class MediaTypeRegistry {
 		add(APPLICATION_JSON, "application/json", "json");
 		add(APPLICATION_X_OBIX_BINARY, "application/x-obix-binary", "obix");
 		add(APPLICATION_CBOR, "application/cbor", "cbor"); // RFC 7049
+		
+		/*** LDP-CoAP Media Type ***/
+		add(TEXT_TURTLE, "text/turtle", "turtle");
+		add(APPLICATION_LD_JSON, "application/ld+json", "json-ld");
+		add(APPLICATION_RDF_PATCH, "application/rdf-patch", "rdf-patch");
+		add(APPLICATION_GZIP, "application/gzip", "gzip");
+		add(APPLICATION_BZIP2, "application/bz2", "bz2");
+		add(APPLICATION_BSON, "application/bson", "bson");
+		add(APPLICATION_UBJSON, "application/ubjson", "ubjson");
+		add(APPLICATION_MSGPACK, "application/msgpack", "msgpack");
 	}
 
 	// Static Functions ////////////////////////////////////////////////////////
@@ -109,6 +129,10 @@ public class MediaTypeRegistry {
 		case APPLICATION_ATOM_XML:
 		case APPLICATION_XMPP_XML:
 		case APPLICATION_JSON:
+		/*** LDP-CoAP Media Type ***/
+		case TEXT_TURTLE:
+		case APPLICATION_LD_JSON:
+		case APPLICATION_RDF_PATCH:
 
 		case UNDEFINED:
 			return true;
@@ -125,6 +149,12 @@ public class MediaTypeRegistry {
 		case APPLICATION_SOAP_FASTINFOSET:
 		case APPLICATION_X_OBIX_BINARY:
 		case APPLICATION_CBOR:
+		/*** LDP-CoAP Media Type ***/
+		case APPLICATION_GZIP:
+		case APPLICATION_BZIP2:
+		case APPLICATION_BSON:
+		case APPLICATION_UBJSON:
+		case APPLICATION_MSGPACK:
 		default:
 			return false;
 		}

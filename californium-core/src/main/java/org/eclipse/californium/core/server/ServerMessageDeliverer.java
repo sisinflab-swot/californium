@@ -42,9 +42,9 @@ import org.eclipse.californium.core.server.resources.Resource;
  * The ServerMessageDeliverer delivers requests to corresponding resources and
  * responses to corresponding requests.
  */
-public final class ServerMessageDeliverer implements MessageDeliverer {
+public class ServerMessageDeliverer implements MessageDeliverer {
 
-	private static final Logger LOGGER = Logger.getLogger(ServerMessageDeliverer.class.getCanonicalName());
+	protected static final Logger LOGGER = Logger.getLogger(ServerMessageDeliverer.class.getCanonicalName());
 
 	/* The root of all resources */
 	private final Resource root;
@@ -104,7 +104,7 @@ public final class ServerMessageDeliverer implements MessageDeliverer {
 	 * @param path
 	 *            the path to the resource
 	 */
-	private void checkForObserveOption(final Exchange exchange, final Resource resource) {
+	protected void checkForObserveOption(final Exchange exchange, final Resource resource) {
 		Request request = exchange.getRequest();
 		if (request.getCode() != Code.GET) {
 			return;
@@ -144,7 +144,7 @@ public final class ServerMessageDeliverer implements MessageDeliverer {
 	 * @param list the path as list of resource names
 	 * @return the resource or null if not found
 	 */
-	private Resource findResource(final List<String> list) {
+	protected Resource findResource(final List<String> list) {
 		LinkedList<String> path = new LinkedList<String>(list);
 		Resource current = root;
 		while (!path.isEmpty() && current != null) {
